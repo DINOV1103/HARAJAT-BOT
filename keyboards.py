@@ -1,6 +1,6 @@
 """
 Bot uchun tugmalar (klaviaturalar).
-Admin boshqaruvi va dynamic tugmalar bilan kengaytirilgan shakli.
+Barcha modullar (Harajat, Daromad, Qarzlar, Admin, Reklama) jamlangan shakli.
 """
 
 import calendar as cal_module
@@ -21,6 +21,11 @@ BTN_MONTH = "🗓 Oylik harajat"
 BTN_CALENDAR = "📅 Kalendar"
 BTN_MAIN_MENU = "🏠 Asosiy menyu"
 
+# Qarzlar tugmalari
+BTN_DEBT_HUB = "🤝 Qarzlar bo'limi"
+BTN_ADD_DEBT = "➕ Qarz qo'shish"
+BTN_MY_DEBTS = "📋 Qarzlarim (Ro'yxat)"
+
 # Admin panel tugmalari
 BTN_ADMIN_PANEL = "👑 Admin Panel"
 BTN_BROADCAST = "📢 Barchaga xabar yuborish"
@@ -32,22 +37,33 @@ MONTH_NAMES = [
 
 
 def main_menu_keyboard(user_id: int) -> ReplyKeyboardMarkup:
-    """Asosiy menyu tugmalari. Admin ID kiritilsa panel ochiladi."""
+    """Asosiy menyu tugmalari. Admin ID kiritilsa dynamic panel tugmasi qo'shiladi."""
     buttons = [
         [KeyboardButton(text=BTN_EXPENSE), KeyboardButton(text=BTN_INCOME)],
         [KeyboardButton(text=BTN_TODAY), KeyboardButton(text=BTN_WEEK)],
         [KeyboardButton(text=BTN_MONTH), KeyboardButton(text=BTN_CALENDAR)],
+        [KeyboardButton(text=BTN_DEBT_HUB)]
     ]
     
-    # Agar foydalanuvchi admin bo'lsa, maxsus tugmani qo'shish
     if user_id == 1691140865:
         buttons.append([KeyboardButton(text=BTN_ADMIN_PANEL)])
         
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 
+def debt_menu_keyboard() -> ReplyKeyboardMarkup:
+    """Qarzlar bo'limi ichki boshqaruv klaviaturasi."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_ADD_DEBT), KeyboardButton(text=BTN_MY_DEBTS)],
+            [KeyboardButton(text=BTN_MAIN_MENU)]
+        ],
+        resize_keyboard=True
+    )
+
+
 def admin_menu_keyboard() -> ReplyKeyboardMarkup:
-    """Admin panel ichki navigatsiya klaviaturasi."""
+    """Admin panel ichki boshqaruv klaviaturasi."""
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_BROADCAST)],
@@ -65,8 +81,8 @@ def cancel_keyboard() -> ReplyKeyboardMarkup:
 
 
 def calendar_keyboard(year: int, month: int) -> InlineKeyboardMarkup:
+    """Tranzaksiyalar uchun standart kalendar."""
     cal = cal_module.Calendar(firstweekday=0)
-
     if month == 1:
         prev_year, prev_month = year - 1, 12
     else:
@@ -98,5 +114,61 @@ def calendar_keyboard(year: int, month: int) -> InlineKeyboardMarkup:
         buttons.append(row)
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+# ================= QARZLAR INLINE TUGMALARI =================
+
+def debt_type_inline() -> InlineKeyboardMarkup:
+    """Qarz turini ajratish uchun inline tugmalar."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📥 Oldim (Qarzdorman)", callback_data="dtype_oldim"),
+            InlineKeyboardButton(text="📤 Berdim (Haqdormand)", callback_data="dtype_berdim")
+        ]
+    ])
+
+
+def debt_calendar_keyboard(year: int, month: int) -> InlineKeyboardMarkup:
+    """Qarz muddati uchun dcal_ prefiksli dynamic kalendar."""
+    cal = cal_module.Calendar(firstweekday=0)
+    if month == 1:
+        prev_year, prev_month = year - 1, 12
+    else:
+        prev_year, prev_month = year, month - 1
+
+    if month == 12:
+        next_year, next_month = year + 1, 1
+    else:
+        next_year, next_month = year, month + 1
+
+    buttons = [
+        [
+            InlineKeyboardButton(text="⬅️", callback_data=f"dcal_nav_{prev_year}_{prev_month}"),
+            InlineKeyboardButton(text=f"{MONTH_NAMES[month - 1]} {year}", callback_data="dcal_ignore"),
+            InlineKeyboardButton(text="➡️", callback_data=f"dcal_nav_{next_year}_{next_month}"),
+        ],
+        [InlineKeyboardButton(text=d, callback_data="dcal_ignore") for d in ["Du", "Se", "Cho", "Pa", "Ju", "Sh", "Ya"]],
+    ]
+
+    today = date.today()
+    for week in cal.monthdayscalendar(year, month):
+        row = []
+        for day in week:
+            if day == 0:
+                row.append(InlineKeyboardButton(text=" ", callback_data="dcal_ignore"))
+            else:
+                label = f"•{day}" if (year, month, day) == (today.year, today.month, today.day) else str(day)
+                row.append(InlineKeyboardButton(text=label, callback_data=f"dcal_day_{year}_{month}_{day}"))
+        buttons.append(row)
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def settle_debt_keyboard(debt_id: int) -> InlineKeyboardMarkup:
+    """Qarzni yopish trigger tugmasi."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ To'landi (Yo'qotish)", callback_data=f"settle_{debt_id}")]
+    ])
+
 
 
