@@ -12,13 +12,14 @@ from aiogram.types import (
     InlineKeyboardButton,
 )
 
-# Asosiy menyu tugmalari matni (bir joyda saqlanadi, xatoga yo'l qoldirmaslik uchun)
+# Tugma matnlari
 BTN_EXPENSE = "💸 Harajat qo'shish"
 BTN_INCOME = "💰 Daromad qo'shish"
 BTN_TODAY = "📊 Bugungi harajat"
 BTN_WEEK = "📆 Haftalik harajat"
 BTN_MONTH = "🗓 Oylik harajat"
 BTN_CALENDAR = "📅 Kalendar"
+BTN_DEBTS = "📒 Qarz daftari"
 BTN_MAIN_MENU = "🏠 Asosiy menyu"
 
 MONTH_NAMES = [
@@ -33,13 +34,24 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=BTN_EXPENSE), KeyboardButton(text=BTN_INCOME)],
             [KeyboardButton(text=BTN_TODAY), KeyboardButton(text=BTN_WEEK)],
             [KeyboardButton(text=BTN_MONTH), KeyboardButton(text=BTN_CALENDAR)],
+            [KeyboardButton(text=BTN_DEBTS)],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def debt_type_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="👤 Qarz oldim (menga berishdi)")],
+            [KeyboardButton(text="👥 Qarz berdim (men berganman)")],
+            [KeyboardButton(text=BTN_MAIN_MENU)],
         ],
         resize_keyboard=True,
     )
 
 
 def cancel_keyboard() -> ReplyKeyboardMarkup:
-    """Summa kiritish kutilayotganda ko'rsatiladigan klaviatura (bekor qilish uchun)."""
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=BTN_MAIN_MENU)]],
         resize_keyboard=True,
@@ -47,8 +59,7 @@ def cancel_keyboard() -> ReplyKeyboardMarkup:
 
 
 def calendar_keyboard(year: int, month: int) -> InlineKeyboardMarkup:
-    """Berilgan oy uchun inline kalendar tugmalarini quradi."""
-    cal = cal_module.Calendar(firstweekday=0)  # Dushanbadan boshlanadi
+    cal = cal_module.Calendar(firstweekday=0)
 
     if month == 1:
         prev_year, prev_month = year - 1, 12
