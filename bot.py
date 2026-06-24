@@ -1,5 +1,6 @@
 """
-Moliya Menejeri - Asosiy mantiqiy kod (FSM holatlari zanjiri mustahkamlangan versiya).
+HARAJAT bot - asosiy fayl.
+Ishga tushirish: python bot.py
 """
 
 import asyncio
@@ -15,27 +16,24 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
+from aiogram.types import Message, CallbackQuery
 
-from database import (
-    init_db, add_user, get_users_count, get_all_user_ids,
-    add_transaction, get_transactions_by_date, get_transactions_by_range,
-    add_debt, get_active_debts, mark_debt_as_paid,
-    add_note, get_notes, delete_note
-)
-
+from database import init_db, add_transaction, get_transactions_by_date, get_transactions_by_range
 from keyboards import (
-    main_menu_keyboard, cancel_keyboard, stats_keyboard,
-    debts_keyboard, notes_keyboard, admin_keyboard, debt_type_inline, calendar_keyboard, category_inline_keyboard,
-    BTN_EXPENSE, BTN_INCOME, BTN_STATS, BTN_DEBTS, BTN_NOTES, BTN_CALENDAR, BTN_ADMIN, BTN_MAIN_MENU,
-    BTN_STATS_TODAY, BTN_STATS_WEEK, BTN_STATS_MONTH, BTN_STATS_TOTAL,
-    BTN_DEBTS_ADD, BTN_DEBTS_LIST, BTN_NOTES_ADD, BTN_NOTES_LIST,
-    BTN_ADMIN_USERS, BTN_ADMIN_BROADCAST, BTN_ADMIN_BACKUP
+    main_menu_keyboard,
+    cancel_keyboard,
+    calendar_keyboard,
+    BTN_EXPENSE,
+    BTN_INCOME,
+    BTN_TODAY,
+    BTN_WEEK,
+    BTN_MONTH,
+    BTN_CALENDAR,
+    BTN_MAIN_MENU,
 )
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = 1691140865  # Admin ID[span_0](start_span)[span_0](end_span)
 
 logging.basicConfig(level=logging.INFO)
 router = Router()
@@ -43,16 +41,10 @@ router = Router()
 
 class Form(StatesGroup):
     waiting_expense = State()
-    waiting_expense_cat = State()
     waiting_income = State()
-    waiting_income_cat = State()
-    waiting_debt_input = State()
-    waiting_debt_type = State()  # Qarz turi uchun maxsus holat
-    waiting_note_input = State()
-    waiting_admin_broadcast = State()
 
 
-# ---------- Yordamchi Funksiyalar ----------
+# ---------- Yordamchi funksiyalar ----------
 
 def format_amount(amount: float) -> str:
     return f"{int(amount):,}".replace(",", " ") + " so'm"
@@ -64,6 +56,11 @@ def format_date_human(date_str: str) -> str:
 
 
 def parse_amount_and_description(text: str):
+    """
+    '50000 taksi' -> (50000.0, 'taksi')
+    '50 000 taksiga' -> (50000.0, 'taksiga')
+    Summa har doim xabar boshida bo'lishi kerak.
+    """
     text = text.strip()
     match = re.match(r"^([\d\s.,]+)\s*(.*)$", text)
     if not match:
@@ -74,344 +71,171 @@ def parse_amount_and_description(text: str):
     if not clean_number.isdigit() or clean_number == "":
         return None, None
     amount = float(clean_number)
-    return (amount, description) if amount > 0 else (None, None)
-
-
-def parse_debt_text(text: str):
-    text = text.strip()
-    match = re.match(r"^(.+?)\s+([\d\s.,]+)$", text)
-    if not match:
+    if amount <= 0:
         return None, None
-    name = match.group(1).strip()
-    raw_amount = match.group(2)
-    clean_amount = re.sub(r"[\s.,]", "", raw_amount)
-    if not clean_amount.isdigit():
-        return None, None
-    return name, float(clean_amount)
+    return amount, description
 
 
-def format_comprehensive_summary(rows, title: str) -> str:
+def format_simple_summary(rows, title):
     if not rows:
-        return f"<b>{title}</b>\n\nBu davrda hech qanday amallar bajarilmadi."
-
-    expenses = [r for r in rows if r[-1] == 'expense']
-    incomes = [r for r in rows if r[-1] == 'income']
-    total_exp = sum(r[0] for r in expenses)
-    total_inc = sum(r[0] for r in incomes)
-
+        return f"<b>{title}</b>\n\nBu kunda hech qanday yozuv yo'q."
+    total = sum(r[0] for r in rows)
     lines = [f"<b>{title}</b>", ""]
-    cat_summary = {}
-    
-    if len(rows[0]) == 5:
-        for amount, cat, desc, txn_date, t_type in rows:
-            cat_summary[cat] = cat_summary.get(cat, 0) + amount
-    else:
-        for amount, cat, desc, t_type in rows:
-            cat_summary[cat] = cat_summary.get(cat, 0) + amount
-
-    lines.append("📌 <b>Toifalar kesimida taqsimot:</b>")
-    for cat, amt in cat_summary.items():
-        lines.append(f"• {cat}: <b>{format_amount(amt)}</b>")
-        
-    lines.append("\n📝 <b>Batafsil amallar ro'yxati:</b>")
-    if len(rows[0]) == 5:
-        grouped = {}
-        for amount, cat, desc, txn_date, t_type in rows:
-            grouped.setdefault(txn_date, []).append((amount, cat, desc, t_type))
-        for d in sorted(grouped.keys()):
-            lines.append(f"📅 <b>{format_date_human(d)}:</b>")
-            for amount, cat, desc, t_type in grouped[d]:
-                icon = "💸" if t_type == "expense" else "💰"
-                lines.append(f"   • {icon} {format_amount(amount)} — {cat} ({desc})")
-    else:
-        for amount, cat, desc, t_type in rows:
-            icon = "💸" if t_type == "expense" else "💰"
-            lines.append(f"• {icon} {format_amount(amount)} — {cat} ({desc})")
-
-    lines.append("\n" + "—" * 20)
-    lines.append(f"💰 Jami daromad: <b>{format_amount(total_inc)}</b>")
-    lines.append(f"💸 Jami harajat: <b>{format_amount(total_exp)}</b>")
-    lines.append(f"⚖️ Sof foyda/Zarar: <b>{format_amount(total_inc - total_exp)}</b>")
+    for amount, description, _type in rows:
+        lines.append(f"• {format_amount(amount)} — {description}")
+    lines.append("")
+    lines.append(f"<b>Jami: {format_amount(total)}</b>")
     return "\n".join(lines)
 
 
-# ---------- Tizim va Navigatsiya Handlerlari ----------
+def format_period_summary(rows, title):
+    if not rows:
+        return f"<b>{title}</b>\n\nBu davrda hech qanday yozuv yo'q."
+    total = sum(r[0] for r in rows)
+    grouped = {}
+    for amount, description, txn_date, _type in rows:
+        grouped.setdefault(txn_date, []).append((amount, description))
+    lines = [f"<b>{title}</b>", ""]
+    for d in sorted(grouped.keys()):
+        day_total = sum(a for a, _ in grouped[d])
+        lines.append(f"📅 {format_date_human(d)} — {format_amount(day_total)}")
+        for amount, description in grouped[d]:
+            lines.append(f"   • {format_amount(amount)} — {description}")
+    lines.append("")
+    lines.append(f"<b>Jami: {format_amount(total)}</b>")
+    return "\n".join(lines)
+
+
+def format_day_detail(rows, date_str):
+    expenses = [(a, d) for a, d, t in rows if t == "expense"]
+    incomes = [(a, d) for a, d, t in rows if t == "income"]
+    lines = [f"<b>📅 {format_date_human(date_str)}</b>", ""]
+    if expenses:
+        lines.append("💸 <b>Harajatlar:</b>")
+        for amount, description in expenses:
+            lines.append(f"   • {format_amount(amount)} — {description}")
+        lines.append(f"   Jami: {format_amount(sum(a for a, _ in expenses))}")
+        lines.append("")
+    if incomes:
+        lines.append("💰 <b>Daromadlar:</b>")
+        for amount, description in incomes:
+            lines.append(f"   • {format_amount(amount)} — {description}")
+        lines.append(f"   Jami: {format_amount(sum(a for a, _ in incomes))}")
+        lines.append("")
+    if not expenses and not incomes:
+        lines.append("Bu kunda hech qanday yozuv yo'q.")
+    return "\n".join(lines)
+
+
+# ---------- Handlerlar ----------
+# DIQQAT: tugma handlerlari (aniq matn bilan) Form holatidagi "ixtiyoriy matn"
+# handlerlaridan OLDIN ro'yxatdan o'tishi kerak. Aks holda, masalan "Harajat
+# qo'shish" rejimida turib "Bugungi harajat" tugmasini bossangiz, bot uni
+# summa deb tushunib xato beradi.
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
-    add_user(message.from_user.id, message.from_user.username, message.from_user.full_name)
-    is_admin = (message.from_user.id == ADMIN_ID)
     await message.answer(
-        f"Salom, <b>{message.from_user.full_name}</b>! Moliyaviy Menejer botiga xush kelibsiz.\n\n"
-        "O'z mablag'laringizni toifalar (kategoriyalar) yordamida oson va qulay nazorat qiling.",
-        reply_markup=main_menu_keyboard(is_admin)
+        "Salom! Men sizning shaxsiy <b>HARAJAT</b> botingizman 💰\n\n"
+        "Quyidagi tugmalar orqali harajat/daromad qo'shing va statistikani kuzating.",
+        reply_markup=main_menu_keyboard(),
+    )
+
+
+@router.message(F.text == BTN_EXPENSE)
+async def ask_expense(message: Message, state: FSMContext):
+    await state.set_state(Form.waiting_expense)
+    await message.answer(
+        "✏️ Qancha harajat qildingiz? Summa va sababini yozing.\n\nMasalan: <i>50000 taksi</i>",
+        reply_markup=cancel_keyboard(),
+    )
+
+
+@router.message(F.text == BTN_INCOME)
+async def ask_income(message: Message, state: FSMContext):
+    await state.set_state(Form.waiting_income)
+    await message.answer(
+        "✏️ Qancha daromad keldi? Summa va manbasini yozing.\n\nMasalan: <i>500000 oylik</i>",
+        reply_markup=cancel_keyboard(),
     )
 
 
 @router.message(F.text == BTN_MAIN_MENU)
 async def back_to_menu(message: Message, state: FSMContext):
     await state.clear()
-    is_admin = (message.from_user.id == ADMIN_ID)
-    await message.answer("🏠 Asosiy menyu.", reply_markup=main_menu_keyboard(is_admin))
+    await message.answer("🏠 Asosiy menyu", reply_markup=main_menu_keyboard())
 
 
-# ---------- Harajat Bo'limi ----------
-
-@router.message(F.text == BTN_EXPENSE)
-async def ask_expense(message: Message, state: FSMContext):
-    await state.set_state(Form.waiting_expense)
-    await message.answer("✏️ Harajat summasi va sababini kiriting.\nMasalan: <i>55000 tushlik do'stlar bilan</i>", reply_markup=cancel_keyboard())
-
-
-@router.message(Form.waiting_expense)
-async def process_expense_amt(message: Message, state: FSMContext):
-    if message.text == BTN_MAIN_MENU:
-        await back_to_menu(message, state)
-        return
-    amount, description = parse_amount_and_description(message.text or "")
-    if amount is None:
-        await message.answer("⚠️ Xatolik. Summani raqam bilan boshlang.\nMasalan: <i>15000 avtobus</i>")
-        return
-    await state.update_data(amt=amount, desc=description, type_="expense")
-    await state.set_state(Form.waiting_expense_cat)
-    await message.answer("📁 Ushbu harajat qaysi <b>toifaga (kategoriyaga)</b> tegishli?", reply_markup=category_inline_keyboard("expense"))
-
-
-# ---------- Daromad Bo'limi ----------
-
-@router.message(F.text == BTN_INCOME)
-async def ask_income(message: Message, state: FSMContext):
-    await state.set_state(Form.waiting_income)
-    await message.answer("✏️ Kelgan daromad summasi va manbasini kiriting.\nMasalan: <i>4500000 bonus oylikdan</i>", reply_markup=cancel_keyboard())
-
-
-@router.message(Form.waiting_income)
-async def process_income_amt(message: Message, state: FSMContext):
-    if message.text == BTN_MAIN_MENU:
-        await back_to_menu(message, state)
-        return
-    amount, description = parse_amount_and_description(message.text or "")
-    if amount is None:
-        await message.answer("⚠️ Xatolik. Summani raqam bilan boshlang.\nMasalan: <i>500000 kassa</i>")
-        return
-    await state.update_data(amt=amount, desc=description, type_="income")
-    await state.set_state(Form.waiting_income_cat)
-    await message.answer("📁 Ushbu daromad qaysi <b>toifaga (kategoriyaga)</b> tegishli?", reply_markup=category_inline_keyboard("income"))
-
-
-# ---------- Toifani Saqlash ----------
-
-@router.callback_query(Form.waiting_expense_cat, F.data.startswith("setcat_"))
-@router.callback_query(Form.waiting_income_cat, F.data.startswith("setcat_"))
-async def save_transaction_with_cat(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    amount = data.get("amt")
-    description = data.get("desc")
-    t_type = data.get("type")
-    
-    if amount is None or t_type is None:
-        await callback.answer("⚠️ Ma'lumot topilmadi. Qayta urinib ko'ring.", show_alert=True)
-        return
-        
-    category = callback.data.split("_")[1]
-    today = date.today().isoformat()
-    
-    add_transaction(callback.from_user.id, t_type, amount, category, description, today)
-    await state.clear()
-    await callback.message.delete()
-    
-    is_admin = (callback.from_user.id == ADMIN_ID)
-    status_text = "💸 Harajat saqlandi" if t_type == "expense" else "💰 Daromad saqlandi"
-    await callback.message.answer(
-        f"✅ <b>{status_text}!</b>\n\n💰 Summa: <b>{format_amount(amount)}</b>\n📁 Toifa: {category}\n📝 Izoh: {description}", 
-        reply_markup=main_menu_keyboard(is_admin)
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "cat_cancel")
-async def cancel_cat_cb(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.delete()
-    is_admin = (callback.from_user.id == ADMIN_ID)
-    await callback.message.answer("❌ Amaliyot bekor qilindi.", reply_markup=main_menu_keyboard(is_admin))
-    await callback.answer()
-
-
-# ---------- Statistika Bo'limi ----------
-
-@router.message(F.text == BTN_STATS)
-async def show_stats_menu(message: Message):
-    await message.answer("📊 Hisobotlar bo'limi. Kerakli davrni tanlang:", reply_markup=stats_keyboard())
-
-
-@router.message(F.text == BTN_STATS_TODAY)
+@router.message(F.text == BTN_TODAY)
 async def today_summary(message: Message):
     today = date.today().isoformat()
-    rows = get_transactions_by_date(message.from_user.id, today)
-    await message.answer(format_comprehensive_summary(rows, f"📋 Bugungi amallar ({format_date_human(today)})"))
+    rows = get_transactions_by_date(message.from_user.id, today, type_="expense")
+    text = format_simple_summary(rows, f"📊 Bugungi harajatlar ({format_date_human(today)})")
+    await message.answer(text)
 
 
-@router.message(F.text == BTN_STATS_WEEK)
+@router.message(F.text == BTN_WEEK)
 async def week_summary(message: Message):
     today = date.today()
-    start = today - timedelta(days=today.weekday())
-    rows = get_transactions_by_range(message.from_user.id, start.isoformat(), today.isoformat())
-    await message.answer(format_comprehensive_summary(rows, "📆 Haftalik jami ko'rsatkichlar"))
+    start = today - timedelta(days=today.weekday())  # joriy hafta dushanbasi
+    rows = get_transactions_by_range(message.from_user.id, start.isoformat(), today.isoformat(), type_="expense")
+    text = format_period_summary(rows, "📆 Haftalik harajatlar")
+    await message.answer(text)
 
 
-@router.message(F.text == BTN_STATS_MONTH)
+@router.message(F.text == BTN_MONTH)
 async def month_summary(message: Message):
     today = date.today()
     start = today.replace(day=1)
-    rows = get_transactions_by_range(message.from_user.id, start.isoformat(), today.isoformat())
-    await message.answer(format_comprehensive_summary(rows, "🗓 Joriy oylik ko'rsatkichlar"))
+    rows = get_transactions_by_range(message.from_user.id, start.isoformat(), today.isoformat(), type_="expense")
+    text = format_period_summary(rows, "🗓 Oylik harajatlar")
+    await message.answer(text)
 
-
-@router.message(F.text == BTN_STATS_TOTAL)
-async def total_summary(message: Message):
-    rows = get_transactions_by_range(message.from_user.id, "1970-01-01", date.today().isoformat())
-    await message.answer(format_comprehensive_summary(rows, "📈 Tizimdagi umumiy moliyaviy balans"))
-
-
-# ---------- Qarz Daftari Bo'limi ----------
-
-@router.message(F.text == BTN_DEBTS)
-async def show_debts_menu(message: Message):
-    await message.answer("📒 Qarz daftari bo'limi:", reply_markup=debts_keyboard())
-
-
-@router.message(F.text == BTN_DEBTS_ADD)
-async def ask_debt(message: Message, state: FSMContext):
-    await state.set_state(Form.waiting_debt_input)
-    await message.answer("✏️ Kim bilan qarz munosabati bo'ldi va qancha?\nMasalan: <i>Jasur 500000</i>", reply_markup=cancel_keyboard())
-
-
-@router.message(Form.waiting_debt_input)
-async def process_debt_input(message: Message, state: FSMContext):
-    if message.text == BTN_MAIN_MENU:
-        await back_to_menu(message, state)
-        return
-    name, amount = parse_debt_text(message.text or "")
-    if not name or amount is None:
-        await message.answer("⚠️ Xato shakl. Ism va summani bo'sh joy qoldirib yozing.\nMasalan: <i>Asror 250000</i>")
-        return
-    await state.update_data(d_name=name, d_amount=amount)
-    await state.set_state(Form.waiting_debt_type)  # Holatni qarz turiga o'tkazamiz
-    await message.answer(f"👤 {name} — {format_amount(amount)}\n\nUshbu qarz turini belgilang:", reply_markup=debt_type_inline())
-
-
-@router.callback_query(Form.waiting_debt_type, F.data.startswith("debt_type_"))
-async def save_debt_callback(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    name = data.get("d_name")
-    amount = data.get("d_amount")
-    
-    if not name or not amount:
-        await callback.answer("⚠️ Ma'lumot topilmadi. Qayta urinib ko'ring.", show_alert=True)
-        return
-        
-    g_type = callback.data.split("_")[2]
-    add_debt(callback.from_user.id, name, amount, g_type)
-    await state.clear()
-    await callback.message.delete()
-    
-    is_admin = (callback.from_user.id == ADMIN_ID)
-    type_str = "Qarz berildi 💸" if g_type == "lent" else "Qarz olindi 💰"
-    await callback.message.answer(f"✅ Qarz saqlandi:\n👤 {name} — <b>{format_amount(amount)}</b> ({type_str})", reply_markup=main_menu_keyboard(is_admin))
-    await callback.answer()
-
-
-@router.callback_query(F.data == "debt_cancel")
-async def cancel_debt_cb(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.delete()
-    is_admin = (callback.from_user.id == ADMIN_ID)
-    await callback.message.answer("❌ Qarz yozish bekor qilindi.", reply_markup=main_menu_keyboard(is_admin))
-    await callback.answer()
-
-
-@router.message(F.text == BTN_DEBTS_LIST)
-async def list_debts(message: Message):
-    rows = get_active_debts(message.from_user.id)
-    if not rows:
-        await message.answer("📒 Hozirda faol qarzlaringiz mavjud emas.")
-        return
-    await message.answer("📜 <b>Sizning faol qarzlaringiz ro'yxati:</b>")
-    for d_id, name, amount, d_type in rows:
-        direction = "Bergan qarzim (menga qaytadi) ➡️" if d_type == "lent" else "Olgan qarzim (qaytarishim kerak) ⬅️"
-        txt = f"👤 <b>{name}</b>\n💵 Summa: {format_amount(amount)}\n📋 Holat: {direction}"
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ To'landi (Yopish)", callback_data=f"pay_{d_id}")]
-        ])
-        await message.answer(txt, reply_markup=kb)
-
-
-@router.callback_query(F.data.startswith("pay_"))
-async def close_debt(callback: CallbackQuery):
-    debt_id = int(callback.data.split("_")[1])
-    mark_debt_as_paid(debt_id, callback.from_user.id)
-    await callback.message.edit_text(callback.message.text + "\n\n✅ <b>Ushbu qarz to'liq yopildi va arxivlandi!</b>")
-    await callback.answer("Qarz yopildi")
-
-
-# ---------- Eslatmalar Bo'limi ----------
-
-@router.message(F.text == BTN_NOTES)
-async def show_notes_menu(message: Message):
-    await message.answer("📝 Eslatmalar bo'limi:", reply_markup=notes_keyboard())
-
-
-@router.message(F.text == BTN_NOTES_ADD)
-async def ask_note(message: Message, state: FSMContext):
-    await state.set_state(Form.waiting_note_input)
-    await message.answer("✏️ Eslatmani yozib yuboring:", reply_markup=cancel_keyboard())
-
-
-@router.message(Form.waiting_note_input)
-async def save_note_msg(message: Message, state: FSMContext):
-    if message.text == BTN_MAIN_MENU:
-        await back_to_menu(message, state)
-        return
-    if not message.text:
-        await message.answer("⚠️ Matnli eslatma kiriting.")
-        return
-    add_note(message.from_user.id, message.text)
-    await state.clear()
-    is_admin = (message.from_user.id == ADMIN_ID)
-    await message.answer("✅ Eslatma muvaffaqiyatli saqlandi!", reply_markup=main_menu_keyboard(is_admin))
-
-
-@router.message(F.text == BTN_NOTES_LIST)
-async def list_notes(message: Message):
-    rows = get_notes(message.from_user.id)
-    if not rows:
-        await message.answer("📝 Eslatmalaringiz ro'yxati bo'sh.")
-        return
-    await message.answer("📌 <b>Sizning eslatmalaringiz:</b>")
-    for n_id, content in rows:
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🗑 O'chirish", callback_data=f"del_note_{n_id}")]
-        ])
-        await message.answer(f"▫️ {content}", reply_markup=kb)
-
-
-@router.callback_query(F.data.startswith("del_note_"))
-async def remove_note_cb(callback: CallbackQuery):
-    note_id = int(callback.data.split("_")[2])
-    delete_note(note_id, callback.from_user.id)
-    await callback.message.delete()
-    await callback.answer("Eslatma o'chirildi")
-
-
-# ---------- Kalendar Bo'limi ----------
 
 @router.message(F.text == BTN_CALENDAR)
 async def show_calendar(message: Message):
     today = date.today()
-    await message.answer("📅 Tarixni ko'rish uchun kunni tanlang:", reply_markup=calendar_keyboard(today.year, today.month))
+    await message.answer("📅 Kunni tanlang:", reply_markup=calendar_keyboard(today.year, today.month))
 
+
+# ---------- Summa kiritish (har qanday matn, faqat tegishli holatda) ----------
+
+@router.message(Form.waiting_expense)
+async def save_expense(message: Message, state: FSMContext):
+    amount, description = parse_amount_and_description(message.text or "")
+    if amount is None:
+        await message.answer(
+            "⚠️ Iltimos, summani raqam bilan boshlab yozing.\nMasalan: <i>50000 taksi</i>"
+        )
+        return
+    today = date.today().isoformat()
+    add_transaction(message.from_user.id, "expense", amount, description, today)
+    await state.clear()
+    await message.answer(
+        f"✅ Harajat qo'shildi:\n{format_amount(amount)} — {description}",
+        reply_markup=main_menu_keyboard(),
+    )
+
+
+@router.message(Form.waiting_income)
+async def save_income(message: Message, state: FSMContext):
+    amount, description = parse_amount_and_description(message.text or "")
+    if amount is None:
+        await message.answer(
+            "⚠️ Iltimos, summani raqam bilan boshlab yozing.\nMasalan: <i>500000 oylik</i>"
+        )
+        return
+    today = date.today().isoformat()
+    add_transaction(message.from_user.id, "income", amount, description, today)
+    await state.clear()
+    await message.answer(
+        f"✅ Daromad qo'shildi:\n{format_amount(amount)} — {description}",
+        reply_markup=main_menu_keyboard(),
+    )
+
+
+# ---------- Kalendar callbacklari ----------
 
 @router.callback_query(F.data == "cal_ignore")
 async def cal_ignore(callback: CallbackQuery):
@@ -430,85 +254,22 @@ async def cal_day_selected(callback: CallbackQuery):
     _, _, year, month, day = callback.data.split("_")
     selected_date = date(int(year), int(month), int(day)).isoformat()
     rows = get_transactions_by_date(callback.from_user.id, selected_date)
-    text = format_comprehensive_summary(rows, f"📅 {format_date_human(selected_date)} kunidagi hisobot")
+    text = format_day_detail(rows, selected_date)
     await callback.message.answer(text)
     await callback.answer()
 
 
-# ---------- Admin Panel Bo'limi ----------
-
-@router.message(F.text == BTN_ADMIN)
-async def show_admin_panel(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    await message.answer("🛡 Admin panel boshqaruv tizimi:", reply_markup=admin_keyboard())
-
-
-@router.message(F.text == BTN_ADMIN_USERS)
-async def admin_users_count(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    count = get_users_count()
-    await message.answer(f"👥 Bot ichidagi jami a'zolar soni: <b>{count} ta</b>")
-
-
-@router.message(F.text == BTN_ADMIN_BACKUP)
-async def admin_backup_database(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    if os.path.exists("harajat.db"):
-        db_file = FSInputFile("harajat.db", filename=f"Backup_{date.today().isoformat()}.db")
-        await message.answer_document(document=db_file, caption="💾 Ma'lumotlar bazasining joriy zaxira nusxasi (Backup) tayyor.")
-    else:
-        await message.answer("❌ Ma'lumotlar bazasi fayli topilmadi.")
-
-
-@router.message(F.text == BTN_ADMIN_BROADCAST)
-async def admin_broadcast_ask(message: Message, state: FSMContext):
-    if message.from_user.id != ADMIN_ID:
-        return
-    await state.set_state(Form.waiting_admin_broadcast)
-    await message.answer("📢 Barcha foydalanuvchilarga yuboriladigan xabar matnini kiriting:", reply_markup=cancel_keyboard())
-
-
-@router.message(Form.waiting_admin_broadcast)
-async def admin_broadcast_send(message: Message, state: FSMContext, bot: Bot):
-    if message.from_user.id != ADMIN_ID:
-        return
-    if message.text == BTN_MAIN_MENU:
-        await back_to_menu(message, state)
-        return
-
-    u_ids = get_all_user_ids()
-    sent_count = 0
-    await message.answer("⏳ Tarqatish boshlandi, iltimos kuting...")
-
-    for uid in u_ids:
-        try:
-            await bot.send_message(chat_id=uid, text=message.text, parse_mode="HTML")
-            sent_count += 1
-            await asyncio.sleep(0.05)
-        except Exception:
-            pass
-
-    await state.clear()
-    await message.answer(f"📢 Tarqatish yakunlandi.\n✅ {sent_count} ta a'zoga muvaffaqiyatli yetib bordi.", reply_markup=main_menu_keyboard(True))
-
-
-# ---------- Loyihani Ishga Tushirish ----------
+# ---------- Ishga tushirish ----------
 
 async def main():
     if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN topilmadi! .env faylini to'g'ri sozlang.")
+        raise RuntimeError("BOT_TOKEN topilmadi! .env faylida BOT_TOKEN=... deb yozing (README.md ga qarang).")
     init_db()
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
     dp = Dispatcher()
     dp.include_router(router)
-    logging.info("Bot muvaffaqiyatli ishga tushdi!")
     await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
