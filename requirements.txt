@@ -1,2 +1,4 @@
-aiogram>=3.7,<4.0
-python-dotenv>=1.0.0
+python-telegram-bot==20.6
+aiosqlite==0.18.0
+python-dotenv==1.0.0
+python-dateutil==2.8.2
