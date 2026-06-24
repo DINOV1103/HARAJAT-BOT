@@ -1,22 +1,15 @@
-"""
-Ma'lumotlar bazasi bilan ishlash uchun funksiyalar.
-SQLite - Tranzaksiyalar, Foydalanuvchilar va Qarzlar tizimi to'liq birlashtirildi.
-"""
-
 import sqlite3
-from datetime import datetime
+from datetime import datetime, date
 
 DB_NAME = "harajat.db"
 
 
 def init_db():
-    """Bot birinchi marta ishga tushganda barcha kerakli jadvallarni yaratadi."""
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
     
-    # 1. Tranzaksiyalar jadvali (Harajatlar va Daromadlar)
-    cur.execute(
-        """
+    # Harajat/Daromad
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS transactions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
@@ -26,190 +19,128 @@ def init_db():
             date TEXT NOT NULL,
             created_at TEXT NOT NULL
         )
-        """
-    )
+    """)
     
-    # 2. Foydalanuvchilar jadvali (Xabar tarqatish va admin paneli uchun)
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            username TEXT,
-            full_name TEXT,
-            joined_at TEXT NOT NULL
-        )
-        """
-    )
-    
-    # 3. Qarzlar jadvali
-    cur.execute(
-        """
+    # Qarzlar
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS debts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
-            type TEXT NOT NULL CHECK(type IN ('oldim', 'berdim')),
-            amount REAL NOT NULL,
+            debt_type TEXT NOT NULL CHECK(debt_type IN ('given', 'taken')),
             person TEXT NOT NULL,
+            amount REAL NOT NULL,
+            description TEXT,
             due_date TEXT NOT NULL,
-            is_paid INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'active' CHECK(status IN ('active', 'returned')),
             created_at TEXT NOT NULL
         )
-        """
+    """)
+    
+    # Foydalanuvchilar (broadcast uchun)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            first_name TEXT,
+            joined_at TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def add_transaction(user_id: int, type_: str, amount: float, description: str, date: str):
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO transactions (user_id, type, amount, description, date, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (user_id, type_, amount, description, date, datetime.now().isoformat())
     )
     conn.commit()
     conn.close()
 
 
-def add_user(user_id: int, username: str, full_name: str):
-    """Yangi foydalanuvchini ro'yxatga oladi (agar mavjud bo'lmasa)."""
+def add_debt(user_id: int, debt_type: str, person: str, amount: float, description: str, due_date: str):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
     cur.execute(
-        """
-        INSERT OR IGNORE INTO users (user_id, username, full_name, joined_at)
-        VALUES (?, ?, ?, ?)
-        """,
-        (user_id, username, full_name, datetime.now().isoformat()),
+        "INSERT INTO debts (user_id, debt_type, person, amount, description, due_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (user_id, debt_type, person, amount, description, due_date, datetime.now().isoformat())
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_transactions_by_date(user_id: int, date_str: str):
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("SELECT amount, description, type FROM transactions WHERE user_id=? AND date=? ORDER BY id", (user_id, date_str))
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def get_transactions_by_range(user_id: int, start_date: str, end_date: str):
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT amount, description, date, type FROM transactions WHERE user_id=? AND date BETWEEN ? AND ? ORDER BY date",
+        (user_id, start_date, end_date)
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def get_active_debts(user_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id, debt_type, person, amount, description, due_date FROM debts WHERE user_id=? AND status='active' ORDER BY due_date",
+        (user_id,)
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def mark_debt_returned(debt_id: int, user_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("UPDATE debts SET status='returned' WHERE id=? AND user_id=?", (debt_id, user_id))
+    conn.commit()
+    conn.close()
+
+
+def get_today_reminders(user_id: int):
+    today = date.today().isoformat()
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT person, amount, description, debt_type FROM debts WHERE user_id=? AND due_date=? AND status='active'",
+        (user_id, today)
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def save_user(user_id: int, username: str = None, first_name: str = None):
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT OR REPLACE INTO users (user_id, username, first_name, joined_at) VALUES (?, ?, ?, ?)",
+        (user_id, username, first_name, datetime.now().isoformat())
     )
     conn.commit()
     conn.close()
 
 
 def get_all_users():
-    """Barchaga xabar yuborish uchun barcha foydalanuvchilar ID ro'yxatini oladi."""
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
     cur.execute("SELECT user_id FROM users")
     rows = cur.fetchall()
     conn.close()
-    return [r[0] for r in rows]
-
-
-def add_transaction(user_id: int, type_: str, amount: float, description: str, date: str):
-    """Yangi harajat yoki daromad yozuvini qo'shadi."""
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT INTO transactions (user_id, type, amount, description, date, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        (user_id, type_, amount, description, date, datetime.now().isoformat()),
-    )
-    conn.commit()
-    conn.close()
-
-
-def get_transactions_by_date(user_id: int, date: str, type_: str = None):
-    """Bitta kun uchun yozuvlarni qaytaradi."""
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    if type_:
-        cur.execute(
-            "SELECT amount, description, type FROM transactions "
-            "WHERE user_id=? AND date=? AND type=? ORDER BY id",
-            (user_id, date, type_),
-        )
-    else:
-        cur.execute(
-            "SELECT amount, description, type FROM transactions "
-            "WHERE user_id=? AND date=? ORDER BY id",
-            (user_id, date),
-        )
-    rows = cur.fetchall()
-    conn.close()
-    return rows
-
-
-def get_transactions_by_range(user_id: int, start_date: str, end_date: str, type_: str = None):
-    """Davr (hafta/oy) uchun yozuvlarni qaytaradi."""
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    if type_:
-        cur.execute(
-            "SELECT amount, description, date, type FROM transactions "
-            "WHERE user_id=? AND date BETWEEN ? AND ? AND type=? ORDER BY date",
-            (user_id, start_date, end_date, type_),
-        )
-    else:
-        cur.execute(
-            "SELECT amount, description, date, type FROM transactions "
-            "WHERE user_id=? AND date BETWEEN ? AND ? ORDER BY date",
-            (user_id, start_date, end_date),
-        )
-    rows = cur.fetchall()
-    conn.close()
-    return rows
-
-
-# ================= QARZLAR MODULI BAZASI =================
-
-def add_debt(user_id: int, type_: str, amount: float, person: str, due_date: str):
-    """Yangi faol qarz yozuvini tizimga qo'shadi."""
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT INTO debts (user_id, type, amount, person, due_date, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        (user_id, type_, amount, person, due_date, datetime.now().isoformat()),
-    )
-    conn.commit()
-    conn.close()
-
-
-def get_active_debts(user_id: int):
-    """Foydalanuvchining hali to'lanmagan (faol) qarzlarini qaytaradi."""
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT id, type, amount, person, due_date FROM debts
-        WHERE user_id=? AND is_paid=0 ORDER BY due_date ASC
-        """,
-        (user_id,),
-    )
-    rows = cur.fetchall()
-    conn.close()
-    return rows
-
-
-def settle_debt(debt_id: int, user_id: int):
-    """Tegishli qarzni to'langan deb belgilaydi (ro'yxatdan o'chiradi)."""
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute(
-        "UPDATE debts SET is_paid=1 WHERE id=? AND user_id=?",
-        (debt_id, user_id),
-    )
-    conn.commit()
-    conn.close()
-
-
-# ================= ADMIN PANEL MODULI BAZASI =================
-
-def get_admin_stats():
-    """Admin panel uchun global tahliliy ma'lumotlarni yig'adi."""
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    
-    # Jami foydalanuvchilar
-    cur.execute("SELECT COUNT(*) FROM users")
-    total_users = cur.fetchone()[0] or 0
-    
-    # Jami harajatlar summasi
-    cur.execute("SELECT SUM(amount) FROM transactions WHERE type='expense'")
-    total_expense = cur.fetchone()[0] or 0
-    
-    # Jami daromadlar summasi
-    cur.execute("SELECT SUM(amount) FROM transactions WHERE type='income'")
-    total_income = cur.fetchone()[0] or 0
-    
-    # Tizimdagi ochiq qarzlar soni
-    cur.execute("SELECT COUNT(*) FROM debts WHERE is_paid=0")
-    active_debts_count = cur.fetchone()[0] or 0
-    
-    conn.close()
-    return total_users, total_expense, total_income, active_debts_count
+    return [row[0] for row in rows]
 
