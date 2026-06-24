@@ -1,6 +1,6 @@
 """
 Ma'lumotlar bazasi bilan ishlash uchun funksiyalar.
-SQLite ishlatiladi - foydalanuvchilar va analitika jadvali qo'shilgan versiyasi.
+SQLite - Tranzaksiyalar, Foydalanuvchilar va Qarzlar tizimi to'liq birlashtirildi.
 """
 
 import sqlite3
@@ -10,11 +10,11 @@ DB_NAME = "harajat.db"
 
 
 def init_db():
-    """Bot birinchi marta ishga tushganda jadvallarni yaratadi."""
+    """Bot birinchi marta ishga tushganda barcha kerakli jadvallarni yaratadi."""
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
     
-    # Tranzaksiyalar jadvali
+    # 1. Tranzaksiyalar jadvali (Harajatlar va Daromadlar)
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS transactions (
@@ -29,7 +29,7 @@ def init_db():
         """
     )
     
-    # Foydalanuvchilar jadvali (Xabar tarqatish va admin paneli uchun)
+    # 2. Foydalanuvchilar jadvali (Xabar tarqatish va admin paneli uchun)
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS users (
@@ -37,6 +37,22 @@ def init_db():
             username TEXT,
             full_name TEXT,
             joined_at TEXT NOT NULL
+        )
+        """
+    )
+    
+    # 3. Qarzlar jadvali
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS debts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            type TEXT NOT NULL CHECK(type IN ('oldim', 'berdim')),
+            amount REAL NOT NULL,
+            person TEXT NOT NULL,
+            due_date TEXT NOT NULL,
+            is_paid INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL
         )
         """
     )
@@ -126,21 +142,74 @@ def get_transactions_by_range(user_id: int, start_date: str, end_date: str, type
     return rows
 
 
+# ================= QARZLAR MODULI BAZASI =================
+
+def add_debt(user_id: int, type_: str, amount: float, person: str, due_date: str):
+    """Yangi faol qarz yozuvini tizimga qo'shadi."""
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO debts (user_id, type, amount, person, due_date, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (user_id, type_, amount, person, due_date, datetime.now().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_active_debts(user_id: int):
+    """Foydalanuvchining hali to'lanmagan (faol) qarzlarini qaytaradi."""
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT id, type, amount, person, due_date FROM debts
+        WHERE user_id=? AND is_paid=0 ORDER BY due_date ASC
+        """,
+        (user_id,),
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def settle_debt(debt_id: int, user_id: int):
+    """Tegishli qarzni to'langan deb belgilaydi (ro'yxatdan o'chiradi)."""
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE debts SET is_paid=1 WHERE id=? AND user_id=?",
+        (debt_id, user_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+# ================= ADMIN PANEL MODULI BAZASI =================
+
 def get_admin_stats():
-    """Admin panel uchun global statistikani yig'adi."""
+    """Admin panel uchun global tahliliy ma'lumotlarni yig'adi."""
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
     
+    # Jami foydalanuvchilar
     cur.execute("SELECT COUNT(*) FROM users")
     total_users = cur.fetchone()[0] or 0
     
+    # Jami harajatlar summasi
     cur.execute("SELECT SUM(amount) FROM transactions WHERE type='expense'")
     total_expense = cur.fetchone()[0] or 0
     
+    # Jami daromadlar summasi
     cur.execute("SELECT SUM(amount) FROM transactions WHERE type='income'")
     total_income = cur.fetchone()[0] or 0
     
+    # Tizimdagi ochiq qarzlar soni
+    cur.execute("SELECT COUNT(*) FROM debts WHERE is_paid=0")
+    active_debts_count = cur.fetchone()[0] or 0
+    
     conn.close()
-    return total_users, total_expense, total_income
-
+    return total_users, total_expense, total_income, active_debts_count
 
