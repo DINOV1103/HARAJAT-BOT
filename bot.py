@@ -1,6 +1,5 @@
 """
-Moliya Menejeri - Asosiy mantiqiy kod.
-Ishga tushirish: python bot.py
+Moliya Menejeri - Asosiy mantiqiy kod (FSM holatlari zanjiri mustahkamlangan versiya).
 """
 
 import asyncio
@@ -10,8 +9,6 @@ import re
 from datetime import date, timedelta
 
 from dotenv import load_dotenv
-import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment
 
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.client.default import DefaultBotProperties
@@ -22,7 +19,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 
 from database import (
     init_db, add_user, get_users_count, get_all_user_ids,
-    add_transaction, get_transactions_by_date, get_transactions_by_range, get_all_transactions_for_excel,
+    add_transaction, get_transactions_by_date, get_transactions_by_range,
     add_debt, get_active_debts, mark_debt_as_paid,
     add_note, get_notes, delete_note
 )
@@ -31,7 +28,7 @@ from keyboards import (
     main_menu_keyboard, cancel_keyboard, stats_keyboard,
     debts_keyboard, notes_keyboard, admin_keyboard, debt_type_inline, calendar_keyboard, category_inline_keyboard,
     BTN_EXPENSE, BTN_INCOME, BTN_STATS, BTN_DEBTS, BTN_NOTES, BTN_CALENDAR, BTN_ADMIN, BTN_MAIN_MENU,
-    BTN_STATS_TODAY, BTN_STATS_WEEK, BTN_STATS_MONTH, BTN_STATS_TOTAL, BTN_EXPORT_EXCEL,
+    BTN_STATS_TODAY, BTN_STATS_WEEK, BTN_STATS_MONTH, BTN_STATS_TOTAL,
     BTN_DEBTS_ADD, BTN_DEBTS_LIST, BTN_NOTES_ADD, BTN_NOTES_LIST,
     BTN_ADMIN_USERS, BTN_ADMIN_BROADCAST, BTN_ADMIN_BACKUP
 )
@@ -50,6 +47,7 @@ class Form(StatesGroup):
     waiting_income = State()
     waiting_income_cat = State()
     waiting_debt_input = State()
+    waiting_debt_type = State()  # Qarz turi uchun maxsus holat
     waiting_note_input = State()
     waiting_admin_broadcast = State()
 
@@ -102,14 +100,12 @@ def format_comprehensive_summary(rows, title: str) -> str:
     total_inc = sum(r[0] for r in incomes)
 
     lines = [f"<b>{title}</b>", ""]
-
-    # Toifalar bo'yicha guruhlash statistikasi
     cat_summary = {}
     
-    if len(rows[0]) == 5:  # Rangeli hisobot (Hafta/Oy)
+    if len(rows[0]) == 5:
         for amount, cat, desc, txn_date, t_type in rows:
             cat_summary[cat] = cat_summary.get(cat, 0) + amount
-    else:  # Kunlik oddiy hisobot
+    else:
         for amount, cat, desc, t_type in rows:
             cat_summary[cat] = cat_summary.get(cat, 0) + amount
 
@@ -147,8 +143,8 @@ async def cmd_start(message: Message, state: FSMContext):
     add_user(message.from_user.id, message.from_user.username, message.from_user.full_name)
     is_admin = (message.from_user.id == ADMIN_ID)
     await message.answer(
-        f"Salom, <b>{message.from_user.full_name}</b>! Professional Moliyaviy Menejer botiga xush kelibsiz.\n\n"
-        "O'z mablag'laringizni toifalar yordamida nazorat qiling va Excel hisobotlarni yuklab oling.",
+        f"Salom, <b>{message.from_user.full_name}</b>! Moliyaviy Menejer botiga xush kelibsiz.\n\n"
+        "O'z mablag'laringizni toifalar (kategoriyalar) yordamida oson va qulay nazorat qiling.",
         reply_markup=main_menu_keyboard(is_admin)
     )
 
@@ -160,7 +156,7 @@ async def back_to_menu(message: Message, state: FSMContext):
     await message.answer("🏠 Asosiy menyu.", reply_markup=main_menu_keyboard(is_admin))
 
 
-# ---------- Harajat Bo'limi (Kategoriyali) ----------
+# ---------- Harajat Bo'limi ----------
 
 @router.message(F.text == BTN_EXPENSE)
 async def ask_expense(message: Message, state: FSMContext):
@@ -182,7 +178,7 @@ async def process_expense_amt(message: Message, state: FSMContext):
     await message.answer("📁 Ushbu harajat qaysi <b>toifaga (kategoriyaga)</b> tegishli?", reply_markup=category_inline_keyboard("expense"))
 
 
-# ---------- Daromad Bo'limi (Kategoriyali) ----------
+# ---------- Daromad Bo'limi ----------
 
 @router.message(F.text == BTN_INCOME)
 async def ask_income(message: Message, state: FSMContext):
@@ -204,9 +200,10 @@ async def process_income_amt(message: Message, state: FSMContext):
     await message.answer("📁 Ushbu daromad qaysi <b>toifaga (kategoriyaga)</b> tegishli?", reply_markup=category_inline_keyboard("income"))
 
 
-# ---------- Toifani Saqlash (Callback Query) ----------
+# ---------- Toifani Saqlash ----------
 
-@router.callback_query(F.data.startswith("setcat_"))
+@router.callback_query(Form.waiting_expense_cat, F.data.startswith("setcat_"))
+@router.callback_query(Form.waiting_income_cat, F.data.startswith("setcat_"))
 async def save_transaction_with_cat(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     amount = data.get("amt")
@@ -214,7 +211,7 @@ async def save_transaction_with_cat(callback: CallbackQuery, state: FSMContext):
     t_type = data.get("type")
     
     if amount is None or t_type is None:
-        await callback.answer("Ma'lumot topilmadi. Qayta urinib ko'ring.", show_alert=True)
+        await callback.answer("⚠️ Ma'lumot topilmadi. Qayta urinib ko'ring.", show_alert=True)
         return
         
     category = callback.data.split("_")[1]
@@ -242,11 +239,11 @@ async def cancel_cat_cb(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ---------- Statistika va Excel Eksport ----------
+# ---------- Statistika Bo'limi ----------
 
 @router.message(F.text == BTN_STATS)
 async def show_stats_menu(message: Message):
-    await message.answer("📊 Hisobotlar bo'limi. Kerakli davrni tanlang yoki ma'lumotlarni Excel formatida yuklab oling:", reply_markup=stats_keyboard())
+    await message.answer("📊 Hisobotlar bo'limi. Kerakli davrni tanlang:", reply_markup=stats_keyboard())
 
 
 @router.message(F.text == BTN_STATS_TODAY)
@@ -278,69 +275,6 @@ async def total_summary(message: Message):
     await message.answer(format_comprehensive_summary(rows, "📈 Tizimdagi umumiy moliyaviy balans"))
 
 
-@router.message(F.text == BTN_EXPORT_EXCEL)
-async def export_to_excel_handler(message: Message):
-    rows = get_all_transactions_for_excel(message.from_user.id)
-    if not rows:
-        await message.answer("📥 Bazangiz bo'sh, excel fayl yaratish uchun hech qanday ma'lumot yo'q.")
-        return
-        
-    await message.answer("⏳ Excel hisobotingiz shakllantirilmoqda, iltimos kuting...")
-    
-    # Excel hujjati yaratish (openpyxl)
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Moliyaviy Hisobot"
-    
-    # Dizayn va stillar
-    header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
-    header_font = Font(name="Arial", size=11, bold=True, color="FFFFFF")
-    data_font = Font(name="Arial", size=10)
-    align_center = Alignment(horizontal="center", vertical="center")
-    align_left = Alignment(horizontal="left", vertical="center")
-    
-    headers = ["Sana", "Tur", "Toifa (Kategoriya)", "Summa", "Izoh / Sabab"]
-    ws.append(headers)
-    
-    for col_num, header in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col_num)
-        cell.fill = header_fill
-        cell.font = header_font
-        cell.alignment = align_center
-
-    for row_idx, data in enumerate(rows, 2):
-        sana, tur, toifa, summa, izoh = data
-        tur_uz = "Daromad 💰" if tur == "income" else "Harajat 💸"
-        ws.append([format_date_human(sana), tur_uz, toifa, summa, izoh])
-        
-        for col_num in range(1, 6):
-            c = ws.cell(row=row_idx, column=col_num)
-            c.font = data_font
-            if col_num in [1, 2]:
-                c.alignment = align_center
-            elif col_num == 4:
-                c.number_format = '#,##0" so\'m"'
-                c.alignment = align_left
-            else:
-                c.alignment = align_left
-
-    # Ustun kengliklarini avtomatlashtirish
-    for col in ws.columns:
-        max_len = max(len(str(cell.value or '')) for cell in col)
-        col_letter = openpyxl.utils.get_column_letter(col[0].column)
-        ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
-
-    file_path = f"Hisobot_{message.from_user.id}.xlsx"
-    wb.save(file_path)
-    
-    # Telegramga yuborish
-    excel_file = FSInputFile(file_path, filename="Mening_Moliyaviy_Hisobotim.xlsx")
-    await message.answer_document(document=excel_file, caption="✅ Sizning barcha davrlardagi batafsil moliyaviy hisobotingiz tayyor bo'ldi!")
-    
-    if os.path.exists(file_path):
-        os.remove(file_path)
-
-
 # ---------- Qarz Daftari Bo'limi ----------
 
 @router.message(F.text == BTN_DEBTS)
@@ -364,21 +298,25 @@ async def process_debt_input(message: Message, state: FSMContext):
         await message.answer("⚠️ Xato shakl. Ism va summani bo'sh joy qoldirib yozing.\nMasalan: <i>Asror 250000</i>")
         return
     await state.update_data(d_name=name, d_amount=amount)
+    await state.set_state(Form.waiting_debt_type)  # Holatni qarz turiga o'tkazamiz
     await message.answer(f"👤 {name} — {format_amount(amount)}\n\nUshbu qarz turini belgilang:", reply_markup=debt_type_inline())
 
 
-@router.callback_query(F.data.startswith("debt_type_"))
+@router.callback_query(Form.waiting_debt_type, F.data.startswith("debt_type_"))
 async def save_debt_callback(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     name = data.get("d_name")
     amount = data.get("d_amount")
+    
     if not name or not amount:
-        await callback.answer("Xatolik ro'y berdi.", show_alert=True)
+        await callback.answer("⚠️ Ma'lumot topilmadi. Qayta urinib ko'ring.", show_alert=True)
         return
+        
     g_type = callback.data.split("_")[2]
     add_debt(callback.from_user.id, name, amount, g_type)
     await state.clear()
     await callback.message.delete()
+    
     is_admin = (callback.from_user.id == ADMIN_ID)
     type_str = "Qarz berildi 💸" if g_type == "lent" else "Qarz olindi 💰"
     await callback.message.answer(f"✅ Qarz saqlandi:\n👤 {name} — <b>{format_amount(amount)}</b> ({type_str})", reply_markup=main_menu_keyboard(is_admin))
@@ -518,8 +456,8 @@ async def admin_users_count(message: Message):
 async def admin_backup_database(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
-    if os.path.exists(DB_NAME):
-        db_file = FSInputFile(DB_NAME, filename=f"Backup_{date.today().isoformat()}.db")
+    if os.path.exists("harajat.db"):
+        db_file = FSInputFile("harajat.db", filename=f"Backup_{date.today().isoformat()}.db")
         await message.answer_document(document=db_file, caption="💾 Ma'lumotlar bazasining joriy zaxira nusxasi (Backup) tayyor.")
     else:
         await message.answer("❌ Ma'lumotlar bazasi fayli topilmadi.")
@@ -566,11 +504,10 @@ async def main():
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
     dp = Dispatcher()
     dp.include_router(router)
-    logging.info("Bot professional rejimda muvaffaqiyatli ishga tushdi!")
+    logging.info("Bot muvaffaqiyatli ishga tushdi!")
     await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
     asyncio.run(main())
 
-    
