@@ -1,18 +1,19 @@
 """
 Ma'lumotlar bazasi bilan ishlash uchun funksiyalar.
-SQLite ishlatiladi - alohida server kerak emas, fayl ko'rinishida saqlanadi.
 """
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, date
 
 DB_NAME = "harajat.db"
 
 
 def init_db():
-    """Bot birinchi marta ishga tushganda jadval yaratadi (agar mavjud bo'lmasa)."""
+    """Jadvallarni yaratadi."""
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
+    
+    # Harajat va daromadlar
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS transactions (
@@ -26,12 +27,30 @@ def init_db():
         )
         """
     )
+    
+    # Qarzlar jadvali
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS debts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            type TEXT NOT NULL CHECK(type IN ('given', 'taken')),
+            person TEXT NOT NULL,
+            amount REAL NOT NULL,
+            description TEXT,
+            due_date TEXT,
+            status TEXT DEFAULT 'active' CHECK(status IN ('active', 'returned')),
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    
     conn.commit()
     conn.close()
 
 
 def add_transaction(user_id: int, type_: str, amount: float, description: str, date: str):
-    """Yangi harajat yoki daromad yozuvini qo'shadi."""
+    """Yangi harajat yoki daromad qo'shish."""
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
     cur.execute(
@@ -45,43 +64,45 @@ def add_transaction(user_id: int, type_: str, amount: float, description: str, d
     conn.close()
 
 
-def get_transactions_by_date(user_id: int, date: str, type_: str = None):
-    """Bitta kun uchun yozuvlarni qaytaradi: (amount, description, type)."""
+def add_debt(user_id: int, debt_type: str, person: str, amount: float, description: str, due_date: str):
+    """Yangi qarz qo'shish."""
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
-    if type_:
-        cur.execute(
-            "SELECT amount, description, type FROM transactions "
-            "WHERE user_id=? AND date=? AND type=? ORDER BY id",
-            (user_id, date, type_),
-        )
-    else:
-        cur.execute(
-            "SELECT amount, description, type FROM transactions "
-            "WHERE user_id=? AND date=? ORDER BY id",
-            (user_id, date),
-        )
+    cur.execute(
+        """
+        INSERT INTO debts (user_id, type, person, amount, description, due_date, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (user_id, debt_type, person, amount, description, due_date, datetime.now().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_active_debts(user_id: int):
+    """Faol qarzlarni qaytaradi."""
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id, type, person, amount, description, due_date FROM debts "
+        "WHERE user_id=? AND status='active' ORDER BY due_date",
+        (user_id,)
+    )
     rows = cur.fetchall()
     conn.close()
     return rows
 
 
-def get_transactions_by_range(user_id: int, start_date: str, end_date: str, type_: str = None):
-    """Davr (hafta/oy) uchun yozuvlarni qaytaradi: (amount, description, date, type)."""
+def get_today_reminders(user_id: int):
+    """Bugun qaytarilishi kerak bo'lgan qarzlarni qaytaradi."""
+    today = date.today().isoformat()
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
-    if type_:
-        cur.execute(
-            "SELECT amount, description, date, type FROM transactions "
-            "WHERE user_id=? AND date BETWEEN ? AND ? AND type=? ORDER BY date",
-            (user_id, start_date, end_date, type_),
-        )
-    else:
-        cur.execute(
-            "SELECT amount, description, date, type FROM transactions "
-            "WHERE user_id=? AND date BETWEEN ? AND ? ORDER BY date",
-            (user_id, start_date, end_date),
-        )
+    cur.execute(
+        "SELECT person, amount, description, type FROM debts "
+        "WHERE user_id=? AND due_date=? AND status='active'",
+        (user_id, today)
+    )
     rows = cur.fetchall()
     conn.close()
     return rows
