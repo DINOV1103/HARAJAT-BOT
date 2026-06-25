@@ -1,4 +1,4 @@
-python-telegram-bot==20.6
-aiosqlite==0.18.0
-python-dotenv==1.0.0
-python-dateutil==2.8.2
+aiogram>=3.7,<4.0
+python-dotenv>=1.0.0
+apscheduler>=3.10,<4.0
+pytz>=2024.1

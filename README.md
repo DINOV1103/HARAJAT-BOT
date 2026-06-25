@@ -1,78 +1,119 @@
-# HARAJAT Bot
+# HARAJAT Bot — Moliyaviy menejer
 
-Telegram orqali shaxsiy harajat va daromadlarni kuzatish boti.
+Telegram orqali shaxsiy harajat, daromad va qarzlarni boshqarish boti. Endi
+**qarz daftari**, **avtomatik bildirishnoma**, **admin panel** va **umumiy
+balans** bilan to'liq moliyaviy menejer holatiga keltirilgan.
 
-## Fayllar tuzilishi
+## Fayllar tuzilishi (PAPKASIZ — mobil uchun qulay)
 
 ```
 harajat_bot/
-├── bot.py             # Asosiy fayl - shu faylni ishga tushirasiz
-├── database.py        # SQLite bilan ishlash (avtomatik harajat.db fayl yaratiladi)
-├── keyboards.py        # Tugmalar (klaviaturalar)
-├── requirements.txt    # Kerakli kutubxonalar ro'yxati
-├── .env.example         # Token qayerga yozilishini ko'rsatuvchi namuna
+├── bot.py                   # Ishga tushirish nuqtasi
+├── config.py                # Token, ADMIN_ID, bildirishnoma vaqti
+├── database.py              # SQLite: users, transactions, debts
+├── keyboards.py             # Barcha tugmalar
+├── states.py                # FSM holatlari
+├── utils.py                 # Formatlash/parsing yordamchilari
+├── scheduler.py             # Kunlik qarz eslatmasi (APScheduler)
+├── handlers_common.py       # /start, asosiy menyu
+├── handlers_finance.py      # Harajat/daromad, hisobotlar, balans
+├── handlers_debts.py        # Qarz daftari
+├── handlers_admin.py        # Admin panel
+├── requirements.txt
+├── .env.example
 └── README.md
 ```
 
-## 1-qadam: Bot tokenini olish
+> **Nega papka yo'q?** GitHub'ga mobil orqali "Upload files" qilinganda,
+> fayl tanlagich papka tuzilishini saqlay olmaydi — barcha fayllar tepaga
+> tushib qoladi. Shu sababli loyiha ataylab **bitta darajali** (flat)
+> qilib qurilgan — endi qanday yuklasangiz ham muammo bo'lmaydi.
 
-1. Telegram'da **@BotFather** ga yoziing
-2. `/newbot` buyrug'ini yuboring
-3. Bot uchun nom va username so'raydi (username "bot" bilan tugashi kerak, masalan: `mening_harajat_bot`)
-4. BotFather sizga token beradi, masalan: `7123456789:AAExampleTokenHere`
-
-## 2-qadam: Kompyuterga o'rnatish
-
-Python 3.10+ kerak. Terminalda:
+## O'rnatish (avvalgidan o'zgarmagan)
 
 ```bash
 cd harajat_bot
 pip install -r requirements.txt
 ```
 
-## 3-qadam: Tokenni sozlash
-
-`.env.example` faylini `.env` deb nomlang va ichidagi tokenni almashtiring:
-
+`.env.example`ni `.env` deb nomlang va tokenni yozing:
 ```
-BOT_TOKEN=7123456789:AAExampleTokenHere
+BOT_TOKEN=...
 ```
 
-## 4-qadam: Botni ishga tushirish
-
+Ishga tushirish:
 ```bash
 python bot.py
 ```
 
-Konsolda xatolik chiqmasa, bot ishlay boshlaydi. Telegram'da botingizga `/start` yuboring.
+## ⚠️ Hozirgi GitHub repozitoriyangizni TUZATISH (muhim!)
 
-## Botdan qanday foydalanish
+Hozir repozitoriyangizda `handlers` papkasiz, fayllar tepada noto'g'ri
+nomlar bilan yotgan bo'lishi mumkin. Tuzatish uchun GitHub'da (mobil
+brauzerda):
 
+**1) Quyidagi ESKI fayllarni o'chiring** (har birining yonidagi ❌ tugmasini bosing):
+- `__init__.py`
+- `admin.py`
+- `common.py`
+- `debts.py`
+- `finance.py`
+- `_.env-2.example.txt` (bu ham kerak emas — token Railway Variables orqali kiritilgan)
+
+**2) `bot.py` ni shu yangisi bilan ALMASHTIRING** (eski faylga bosib, "..." → "Delete" qiling, keyin yangisini yuklang — yoki to'g'ridan-to'g'ri ustiga "Upload files" qilsangiz, GitHub o'zi "almashtirilsinmi?" deb so'raydi)
+
+**3) Quyidagi YANGI fayllarni qo'shing** (papkasiz, to'g'ridan-to'g'ri tepaga):
+- `handlers_common.py`
+- `handlers_finance.py`
+- `handlers_debts.py`
+- `handlers_admin.py`
+
+**4) Commit qiling** — Railway avtomatik qayta build qiladi (Deployments bo'limida "Building" ko'rinadi, keyin "Active"/yashil bo'ladi)
+
+Tokenni qayta kiritish kerak emas — u allaqachon Railway'ning Variables bo'limida saqlangan.
+
+## Yangi imkoniyatlar
+
+### 📒 Qarz daftari
 | Tugma | Vazifasi |
 |---|---|
-| 💸 Harajat qo'shish | Bosgandan keyin summa va sababini yozasiz (masalan: `50000 taksi`) — bugungi kunga qo'shiladi |
-| 💰 Daromad qo'shish | Bosgandan keyin summa va manbasini yozasiz (masalan: `500000 oylik`) — bugungi kunga qo'shiladi |
-| 📊 Bugungi harajat | Bugun qilingan barcha harajatlar ro'yxati va jami summa |
-| 📆 Haftalik harajat | Joriy hafta (dushanbadan bugungi kungacha) harajatlari, kun bo'yicha guruhlangan |
-| 🗓 Oylik harajat | Joriy oy harajatlari, kun bo'yicha guruhlangan |
-| 📅 Kalendar | Istalgan oy/kunni tanlab, o'sha kundagi harajat **va** daromadni ko'rish |
+| 🤝 Qarz berish | Ism → summa → kalendardan qaytarish sanasini tanlash |
+| 📥 Qarz olish | Xuddi shunday, lekin "kimdan oldingiz" so'raladi |
+| 📋 Qarzlar | Faol qarzlar ro'yxati (⏰ — muddati o'tgan). Har bir qatorni bosib, "qaytarildi" deb belgilash mumkin |
 
-**Muhim:** Summa yozayotganda raqamni har doim **boshida** yozing. To'g'ri: `50000 taksi`. Noto'g'ri: `taksiga 50000`.
+### ⏰ Avtomatik bildirishnoma
+Har kuni soat **09:00** (Toshkent vaqti) bot tekshiradi: qaysi qarzlarning
+qaytarish sanasi **aynan bugun** — shu foydalanuvchiga avtomatik xabar
+yuboriladi. Bitta qarz uchun bildirishnoma faqat **bir marta** yuboriladi
+(bot qayta ishga tushsa ham takrorlanmaydi).
 
-## Doimiy ishlashi uchun (24/7) — bepul variantlar
+> Vaqtni o'zgartirish uchun `config.py` faylida `REMINDER_HOUR` / `REMINDER_MINUTE`ni tahrirlang.
 
-Kompyuteringiz o'chirilganda bot ham to'xtaydi. Doimiy ishlashi uchun bepul hosting variantlari:
+### 📈 Umumiy balans
+Asosiy menyudagi yangi tugma — jami daromad, jami harajat, sof holat
+(ortiqcha/kamomad) va qarzlar bo'yicha umumiy ko'rinishni bir joyda ko'rsatadi.
 
-- **Railway.app** — oyiga bepul limit beradi, GitHub orqali avtomatik deploy qiladi
-- **Render.com** — "Background Worker" turida bepul tarif mavjud
-- **PythonAnywhere** — kichik botlar uchun bepul tarif bor
+### 🛠 Admin panel
+Faqat Telegram ID **`1691140865`** uchun ko'rinadi (asosiy menyuning oxirida
+qo'shimcha tugma chiqadi):
 
-Har birida: loyihani GitHub'ga yuklaysiz, keyin platforma orqali ulaysiz, `BOT_TOKEN`ni "Environment Variables" bo'limiga kiritasiz, `python bot.py` ni start buyrug'i sifatida belgilaysiz.
+| Bo'lim | Vazifasi |
+|---|---|
+| 📊 Statistika | Foydalanuvchilar soni, jami harajat/daromad, faol va yopilgan qarzlar |
+| 📢 Xabar yuborish | Botdan foydalangan **barcha** foydalanuvchilarga bir vaqtda xabar yuborish |
+| 👥 Foydalanuvchilar | Ism, username va ID bo'yicha ro'yxat (so'nggi 30 ta) |
 
-## Kengaytirish g'oyalari (xohlasangiz so'rang, qo'shib beraman)
+Admin ID'ni o'zgartirish kerak bo'lsa — `config.py` faylidagi `ADMIN_ID` qiymatini tahrirlang.
 
-- Harajat kategoriyalari (oziq-ovqat, transport, kiyim va h.k.) bo'yicha statistika
-- Excel/CSV formatda hisobot eksport qilish
-- Oylik byudjet belgilash va limitdan oshganda ogohlantirish
-- Bir nechta valyutada hisob yuritish
-- Daromad bo'yicha haftalik/oylik statistika tugmalari
+## Texnik eslatmalar
+
+- **Bildirishnoma ishlashi uchun** bot 24/7 ishlab turishi kerak (Railway'da bo'lsa avtomatik tayyor)
+- **Ma'lumotlar bazasi** (`harajat.db`) Railway qayta deploy qilinganda tozalanib qolishi mumkin — bu xavfni yo'qotish uchun Railway'da **Volume** (doimiy xotira) qo'shish tavsiya etiladi
+- Barcha summalar **butun so'm** ko'rinishida ishlaydi (tiyin/kasr son qo'llab-quvvatlanmaydi)
+
+## Kengaytirish g'oyalari
+
+- Harajat kategoriyalari bo'yicha statistika
+- Excel/CSV eksport
+- Oylik byudjet limiti va ogohlantirish
+- Muddati o'tgan qarzlar uchun har kuni qaytariladigan eslatma (hozir faqat aynan muddat kunida yuboriladi)
